@@ -1,7 +1,12 @@
 package org.geektimes.projects.user.sql;
 
+import org.geektimes.projects.user.context.ComponentContext;
 import org.geektimes.projects.user.domain.User;
 
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+import javax.sql.DataSource;
 import java.beans.BeanInfo;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
@@ -11,85 +16,54 @@ import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
-public class DBConnectionManager {
+public class DBConnectionManager { // JNDI Component
 
-    private static ConcurrentHashMap<String, Connection> connectionMap = new ConcurrentHashMap<>(2);
+    private final Logger logger = Logger.getLogger(DBConnectionManager.class.getName());
 
-
-    private static String mapColumnLabel(String fieldName){
-        return fieldName;
-    }
-
-    /**
-     * 数据类型与 ResultSet 方法名映射
-     */
-    static Map<Class, String> typeMethodMappings = new HashMap<>();
-
-    static{
+    public Connection getConnection() {
+        ComponentContext context = ComponentContext.getInstance();
+        // 依赖查找
+        DataSource dataSource = context.getComponent("jdbc/UserPlatformDB");
+        Connection connection = null;
         try {
-            Class.forName("com.mysql.jdbc.Driver");
-            String databaseURL = "jdbc:mysql://114.67.171.251:3341/hmily_order?useUnicode=true&characterEncoding=utf8";
-            Connection connection = DriverManager.getConnection(databaseURL,"root","123456");
-
-            setConnection(connection);
-
-            connectionMap.putIfAbsent("connectionMysql",connection);
-
-            typeMethodMappings.put(Long.class,"getLong");
-            typeMethodMappings.put(String.class,"getString");
-
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+            connection = dataSource.getConnection();
         } catch (SQLException e) {
-            e.printStackTrace();
+            logger.log(Level.SEVERE, e.getMessage());
         }
-    }
-
-    private DBConnectionManager(){
-    }
-
-    private static volatile DBConnectionManager instance = null;
-
-    //懒加载线程安全 ，避免jvm的指令重排序功能，
-    //同时两个判空处理
-    public static DBConnectionManager getInstance(){
-        if (instance == null) {
-            synchronized (DBConnectionManager.class) {
-                if (instance == null) {
-                    instance = new DBConnectionManager();
-                }
-            }
+        if (connection != null) {
+            logger.log(Level.INFO, "获取 JNDI 数据库连接成功！");
+            System.out.println("获取 JNDI 数据库连接成功！");
         }
-        return instance;
-    }
-
-    private Connection connection;
-
-    public static void setConnection(Connection connection){
-        connection = connection;
-    }
-
-    public Connection getConnection(){
-        Connection connection = connectionMap.get("connectionMysql");
         return connection;
     }
 
-    public void releaseConnection(){
-        if (this.connection != null) {
-            try {
-                this.connection.close();
-            } catch (SQLException e) {
-                throw new RuntimeException(e.getCause());
-            }
-        }
+//    private Connection connection;
+//
+//    public void setConnection(Connection connection) {
+//        this.connection = connection;
+//    }
+//
+//    public Connection getConnection() {
+//        return this.connection;
+//    }
+
+    public void releaseConnection() {
+//        if (this.connection != null) {
+//            try {
+//                this.connection.close();
+//            } catch (SQLException e) {
+//                throw new RuntimeException(e.getCause());
+//            }
+//        }
     }
 
     public static final String DROP_USERS_TABLE_DDL_SQL = "DROP TABLE users";
 
     public static final String CREATE_USERS_TABLE_DDL_SQL = "CREATE TABLE users(" +
-            "id INT NOT NULL  AUTO_INCREMENT  PRIMARY KEY  , " +
+            "id INT NOT NULL PRIMARY KEY GENERATED ALWAYS AS IDENTITY (START WITH 1, INCREMENT BY 1), " +
             "name VARCHAR(16) NOT NULL, " +
             "password VARCHAR(64) NOT NULL, " +
             "email VARCHAR(64) NOT NULL, " +
@@ -104,7 +78,7 @@ public class DBConnectionManager {
             "('E','******','e@gmail.com','5')";
 
 
-    public static void main(String[] args) throws Exception{
+    public static void main(String[] args) throws Exception {
 //        通过 ClassLoader 加载 java.sql.DriverManager -> static 模块 {}
 //        DriverManager.setLogWriter(new PrintWriter(System.out));
 //
@@ -112,11 +86,8 @@ public class DBConnectionManager {
 //        Driver driver = DriverManager.getDriver("jdbc:derby:/db/user-platform;create=true");
 //        Connection connection = driver.connect("jdbc:derby:/db/user-platform;create=true", new Properties());
 
-//        String databaseURL = "jdbc:derby:/db/user-platform;create=true";
-
-        Class.forName("com.mysql.jdbc.Driver");
-        String databaseURL = "jdbc:mysql://114.67.171.251:3341/hmily_order?useUnicode=true&characterEncoding=utf8";
-        Connection connection = DriverManager.getConnection(databaseURL,"root","123456");
+        String databaseURL = "jdbc:derby:/db/user-platform;create=true";
+        Connection connection = DriverManager.getConnection(databaseURL);
 
         Statement statement = connection.createStatement();
         // 删除 users 表
@@ -129,7 +100,7 @@ public class DBConnectionManager {
         ResultSet resultSet = statement.executeQuery("SELECT id,name,password,email,phoneNumber FROM users");
 
         // BeanInfo
-        BeanInfo userBeanInfo = Introspector.getBeanInfo(User.class,Object.class);
+        BeanInfo userBeanInfo = Introspector.getBeanInfo(User.class, Object.class);
 
         // 所有的 Properties 信息
         for (PropertyDescriptor propertyDescriptor : userBeanInfo.getPropertyDescriptors()) {
@@ -179,15 +150,15 @@ public class DBConnectionManager {
                 String methodName = typeMethodMappings.get(fieldType);
                 // 可能存在映射关系（不过此处是相等的）
                 String columnLabel = mapColumnLabel(fieldName);
-                Method resultSetMethod = ResultSet.class.getMethod(methodName,String.class);
+                Method resultSetMethod = ResultSet.class.getMethod(methodName, String.class);
                 // 通过放射调用 getXXX(String) 方法
-                Object resultValue = resultSetMethod.invoke(resultSet,columnLabel);
+                Object resultValue = resultSetMethod.invoke(resultSet, columnLabel);
                 // 获取 User 类 Setter方法
                 // PropertyDescriptor ReadMethod 等于 Getter 方法
                 // PropertyDescriptor WriteMethod 等于 Setter 方法
                 Method setterMethodFromUser = propertyDescriptor.getWriteMethod();
                 // 以 id 为例，  user.setId(resultSet.getLong("id"));
-                setterMethodFromUser.invoke(user,resultValue);
+                setterMethodFromUser.invoke(user, resultValue);
             }
 
             System.out.println(user);
@@ -196,4 +167,17 @@ public class DBConnectionManager {
         connection.close();
     }
 
+    private static String mapColumnLabel(String fieldName) {
+        return fieldName;
+    }
+
+    /**
+     * 数据类型与 ResultSet 方法名映射
+     */
+    static Map<Class, String> typeMethodMappings = new HashMap<>();
+
+    static {
+        typeMethodMappings.put(Long.class, "getLong");
+        typeMethodMappings.put(String.class, "getString");
+    }
 }
